@@ -95,40 +95,42 @@ module Workflow
     end
 
     def process_event!(name, *args)
-      event = current_state.events.first_applicable(name, self)
-      raise NoTransitionAllowed.new(
-        "There is no event #{name.to_sym} defined for the #{current_state} state") \
-        if event.nil?
-      @halted_because = nil
-      @halted = false
+      with_lock do
+        event = current_state.events.first_applicable(name, self)
+        raise NoTransitionAllowed.new(
+          "There is no event #{name.to_sym} defined for the #{current_state} state") \
+          if event.nil?
+        @halted_because = nil
+        @halted = false
 
-      check_transition(event)
+        check_transition(event)
 
-      from = current_state
-      to = spec.states[event.transitions_to]
+        from = current_state
+        to = spec.states[event.transitions_to]
 
-      run_before_transition(from, to, name, *args)
-      return false if @halted
+        run_before_transition(from, to, name, *args)
+        return false if @halted
 
-      begin
-        return_value = run_action(event.action, *args) || run_action_callback(event.name, *args)
-      rescue StandardError => e
-        run_on_error(e, from, to, name, *args)
+        begin
+          return_value = run_action(event.action, *args) || run_action_callback(event.name, *args)
+        rescue StandardError => e
+          run_on_error(e, from, to, name, *args)
+        end
+
+        return false if @halted
+
+        run_on_transition(from, to, name, *args)
+
+        run_on_exit(from, to, name, *args)
+
+        transition_value = persist_workflow_state to.to_s
+
+        run_on_entry(to, from, name, *args)
+
+        run_after_transition(from, to, name, *args)
+
+        return_value.nil? ? transition_value : return_value
       end
-
-      return false if @halted
-
-      run_on_transition(from, to, name, *args)
-
-      run_on_exit(from, to, name, *args)
-
-      transition_value = persist_workflow_state to.to_s
-
-      run_on_entry(to, from, name, *args)
-
-      run_after_transition(from, to, name, *args)
-
-      return_value.nil? ? transition_value : return_value
     end
 
     def halt(reason = nil)
